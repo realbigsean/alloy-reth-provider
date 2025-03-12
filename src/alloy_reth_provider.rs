@@ -1,7 +1,7 @@
 use crate::alloy_reth_state_provider::AlloyRethStateProvider;
 use alloy_consensus::BlockHeader;
 use alloy_eips::eip4895::Withdrawals;
-use alloy_eips::{BlockHashOrNumber, BlockNumberOrTag};
+use alloy_eips::{BlockHashOrNumber, BlockNumHash, BlockNumberOrTag};
 use alloy_network::primitives::{BlockTransactionsKind, HeaderResponse};
 use alloy_network::{BlockResponse, Network};
 use alloy_primitives::{Address, BlockHash, BlockNumber, TxHash, TxNumber, B256, U256};
@@ -13,8 +13,9 @@ use reth_errors::{ProviderError, ProviderResult};
 use reth_primitives::{Receipt, RecoveredBlock, SealedBlock, SealedHeader, TransactionMeta, TransactionSigned};
 use reth_provider::errors::any::AnyError;
 use reth_provider::{
-    BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockSource, ChainSpecProvider, HeaderProvider,
-    OmmersProvider, ReceiptProvider, StateProviderBox, StateProviderFactory, TransactionVariant, TransactionsProvider, WithdrawalsProvider,
+    BlockBodyIndicesProvider, BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, BlockReaderIdExt, BlockSource,
+    ChainSpecProvider, HeaderProvider, OmmersProvider, ReceiptProvider, ReceiptProviderIdExt, StateProviderBox, StateProviderFactory,
+    TransactionVariant, TransactionsProvider, WithdrawalsProvider,
 };
 use std::marker::PhantomData;
 use std::ops::{RangeBounds, RangeInclusive};
@@ -23,7 +24,7 @@ use tokio::runtime::Handle;
 
 #[derive(Clone)]
 pub struct AlloyRethProvider<N, P: Send + Sync + Clone + 'static> {
-    provider: P,
+    pub provider: P,
     _n: PhantomData<N>,
 }
 
@@ -51,6 +52,43 @@ where
     }
 
     fn finalized_block_num_hash(&self) -> ProviderResult<Option<alloy_eips::BlockNumHash>> {
+        let block = tokio::task::block_in_place(move || {
+            Handle::current().block_on(self.provider.get_block_by_number(BlockNumberOrTag::Finalized, BlockTransactionsKind::Hashes))
+        });
+        match block {
+            Ok(Some(block)) => {
+                let number = block.header().number();
+                let hash = B256::from(*block.header().hash());
+                Ok(Some(BlockNumHash { number, hash }))
+            }
+            Ok(None) => Err(ProviderError::FinalizedBlockNotFound),
+            Err(e) => Err(ProviderError::Other(AnyError::new(e))),
+        }
+    }
+}
+
+impl<N, P> BlockReaderIdExt for AlloyRethProvider<N, P>
+where
+    N: Network<
+        HeaderResponse = alloy_rpc_types_eth::Header,
+        BlockResponse = alloy_rpc_types_eth::Block,
+        TransactionResponse = alloy_rpc_types_eth::Transaction,
+    >,
+    P: Provider<N> + Send + Sync + Clone + 'static,
+{
+    fn block_by_id(&self, _id: alloy_eips::BlockId) -> ProviderResult<Option<Self::Block>> {
+        todo!()
+    }
+
+    fn sealed_header_by_id(&self, _id: alloy_eips::BlockId) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+        todo!()
+    }
+
+    fn header_by_id(&self, _id: alloy_eips::BlockId) -> ProviderResult<Option<Self::Header>> {
+        todo!()
+    }
+
+    fn ommers_by_id(&self, _id: alloy_eips::BlockId) -> ProviderResult<Option<Vec<Self::Header>>> {
         todo!()
     }
 }
@@ -208,8 +246,15 @@ where
         }
     }
 
-    fn header_by_number(&self, _num: u64) -> ProviderResult<Option<Self::Header>> {
-        todo!()
+    fn header_by_number(&self, num: u64) -> ProviderResult<Option<Self::Header>> {
+        let block = tokio::task::block_in_place(move || {
+            Handle::current().block_on(self.provider.get_block_by_number(BlockNumberOrTag::Number(num), BlockTransactionsKind::Hashes))
+        });
+        match block {
+            Ok(Some(block)) => Ok(Some(block.header().clone().into())),
+            Ok(None) => Err(ProviderError::BlockBodyIndicesNotFound(num)),
+            Err(e) => Err(ProviderError::Other(AnyError::new(e))),
+        }
     }
 
     fn header_td(&self, _hash: &BlockHash) -> ProviderResult<Option<U256>> {
@@ -311,6 +356,13 @@ where
     fn receipts_by_tx_range(&self, _range: impl RangeBounds<TxNumber>) -> ProviderResult<Vec<Receipt>> {
         todo!()
     }
+}
+
+impl<N, P> ReceiptProviderIdExt for AlloyRethProvider<N, P>
+where
+    N: Network,
+    P: 'static + Clone + Provider<N> + Send + Sync,
+{
 }
 
 impl<N, P> WithdrawalsProvider for AlloyRethProvider<N, P>

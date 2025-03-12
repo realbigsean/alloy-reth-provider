@@ -1,4 +1,5 @@
 use crate::alloy_db::{AlloyDBFork, WrapDatabaseAsync};
+use alloy_consensus::constants::KECCAK_EMPTY;
 use alloy_eips::BlockId;
 use alloy_network::Network;
 use alloy_primitives::map::{B256HashMap, HashMap};
@@ -69,8 +70,12 @@ where
             Ok(Some(account)) => {
                 let bytecode_hash = match account.code {
                     Some(code) => {
-                        self.bytecode.write().insert(account.code_hash, Bytecode::new_raw(code.bytes()));
-                        Some(account.code_hash)
+                        if account.code_hash == KECCAK_EMPTY {
+                            None
+                        } else {
+                            self.bytecode.write().insert(account.code_hash, Bytecode::new_raw(code.bytes()));
+                            Some(account.code_hash)
+                        }
                     }
                     None => None,
                 };
