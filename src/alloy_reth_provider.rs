@@ -24,7 +24,7 @@ use tokio::runtime::Handle;
 
 #[derive(Clone)]
 pub struct AlloyRethProvider<N, P: Send + Sync + Clone + 'static> {
-    pub provider: P,
+    provider: P,
     _n: PhantomData<N>,
 }
 
